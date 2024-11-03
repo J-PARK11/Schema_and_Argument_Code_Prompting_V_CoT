@@ -10,6 +10,97 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
-        }
+        },
+
+        {
+            "name": "train.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "train.py",
+            "console": "integratedTerminal",
+            "args":[
+                "--mode", "train",
+                "--model_name", "Qwen2_VL_2B",
+                "--batch_size", "8",
+                "--lr", "1e-5",
+                "--save_folder", "dump"
+            ]
+        },
+
+        {
+            "name": "eval.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "eval.py",
+            "console": "integratedTerminal",
+            "args":[
+                "--model_name", "Qwen2_VL_2B_Clf",
+                "--mode", "supervised_test",
+                "--load_ckpt_path", "qwen2_vl_2b_clf_batch_8_lr_1e5_epoch5/epoch_5"
+            ]
+        },
+
+        {
+            "name": "official_train.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "official_train.py",
+            "console": "integratedTerminal",
+            "args":[
+                "--mode", "train",
+                "--model_name", "Qwen2_VL_2B_Clf",
+                "--batch_size", "1",
+                "--lr", "1e-8",
+                "--save_folder", "dump",
+            ]
+        },
+
+        {
+            "name": "single_official_train.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "single_official_train.py",
+            "console": "integratedTerminal",
+            "args":[
+                "--num_workers", "4",
+                "--model_name", "qwen2_vl_2b",
+                "--num_epochs", "1",
+                "--loss_type", "classifier",
+                "--batch_size", "1",
+                "--log_freq", "10",
+                "--train_backbone",
+                "--word_embed", "bert",
+                "--lr", "1e-3",
+                "--puzzles", "all",
+                "--split_type", "standard",
+                "--save_root", "/data/jhpark_checkpoint/schema_and_argument_ckpt/official_classification/dump"
+                // "--no_meta"
+            ]
+        },
+
+        {
+            "name": "single_official_test.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "single_official_train.py",
+            "console": "integratedTerminal",
+            "args":[
+                "--num_workers", "4",
+                "--model_name", "qwen2_vl_2b",
+                "--num_epochs", "1",
+                "--loss_type", "classifier",
+                "--batch_size", "1",
+                "--log_freq", "10",
+                "--train_backbone",
+                "--word_embed", "bert",
+                "--lr", "1e-5",
+                "--puzzles", "all",
+                "--test",
+                "--seed", "6663",
+                "--split_type", "standard",
+                // "--no_meta"
+            ]
+        },
+
     ]
 }

@@ -8,20 +8,22 @@ def get_dataset(args, processor):
         print('\n*****Load Train DataLoader*****')
         train_dataset = V_COT_SMART101_Dataset(args, 'train')
         valid_dataset = V_COT_SMART101_Dataset(args, 'valid')
+        
+        collator = partial(img_dcp_train_collator_fn, args=args, processor=processor, device='cuda')
      
         # Train Loader
         train_loader = DataLoader(
         train_dataset,
         shuffle=True,
         batch_size=args.batch_size,
-        collate_fn=partial(img_dcp_train_collator_fn, processor=processor, device='cuda'))
+        collate_fn=collator)
         
         # Valid Loader
         valid_loader = DataLoader(
         valid_dataset,
         shuffle=False,
         batch_size=args.batch_size,
-        collate_fn=partial(img_dcp_train_collator_fn, processor=processor, device='cuda'))
+        collate_fn=collator)
         
         return train_loader, valid_loader
     
@@ -29,12 +31,14 @@ def get_dataset(args, processor):
         
         print('\n*****Load Test DataLoader*****')
         test_dataset = V_COT_SMART101_Dataset(args, args.mode)
-
+        
+        collator = partial(img_dcp_test_collator_fn, args=args, processor=processor, device='cuda')
+     
         # Test Loader
         test_loader = DataLoader(
         test_dataset,
         shuffle=False,
         batch_size=args.batch_size,
-        collate_fn=partial(img_dcp_test_collator_fn, processor=processor, device='cuda'))
+        collate_fn=collator)
         
         return test_loader

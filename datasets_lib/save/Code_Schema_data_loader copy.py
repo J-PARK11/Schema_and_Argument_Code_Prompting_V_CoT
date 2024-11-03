@@ -24,57 +24,41 @@ class V_COT_SMART101_Dataset(Dataset):
         
         self.args = args
         self.mode = mode
-        self.experiment = args.experiment
         self.diff = 'easy'
         self.data_root = args.data_root
         
-        # Image Description & Pseudo Code Loading...
+        self.use_puzzle_list = "6,10,21,31,46,48,49,56,59,62,63,67,74,88,93,94,96,98,100,101"
+                
         self.image_description_path = os.path.join('/data/SMART101-release-v1/schema_and_argument_data',
                                                    args.img_dcp_path)
         self.pseudo_code_path = os.path.join('/data/SMART101-release-v1/schema_and_argument_data',
                                              args.pseudo_code_path)
-    
+        
+        # Image Description & Pseudo Code Loading.
         with open(self.image_description_path,'r') as f:
             self.image_description = json.load(f)
-            print(f'\nImage Description: {len(self.image_description)}')
-
+        
         with open(self.pseudo_code_path,'r') as f:
             self.pseudo_code = json.load(f)    
-            print(f'Pseudo Code: {len(self.pseudo_code)}\n')            
-            
-        # Supervised vs Zeroshot Experiment Setting Root Puzzle Split...
-        if self.mode == 'train':
-            if self.experiment == 'supervised':
-                self.puzzle_ids = [str(pid) for pid in range(1,102)]
-            elif self.experiment == 'zeroshot':
-                self.puzzle_ids = [pid for pid in range(1,102)]
-                self.puzzle_ids = sorted(list(set(self.puzzle_ids) - set(gv.PS_VAL_IDX) - set(gv.PS_TEST_IDX)))
-                self.puzzle_ids = list(map(str, self.puzzle_ids))
-            self.start_idx = 0
-            self.end_idx = 1600
-                                
-        elif self.mode == 'valid':
-            if self.experiment == 'supervised':
-                self.puzzle_ids = [str(pid) for pid in range(1,102)]
-            elif self.experiment == 'zeroshot':
-                self.puzzle_ids = gv.PS_VAL_IDX
-                self.puzzle_ids = list(map(str, self.puzzle_ids))
-            self.start_idx = 1600
-            self.end_idx = 1700
-            
-        elif self.mode == 'test':
-            if self.experiment == 'supervised':
-                self.puzzle_ids = [str(pid) for pid in range(1,102)]
-            elif self.experiment == 'zeroshot':
-                self.puzzle_ids = gv.PS_TEST_IDX
-                self.puzzle_ids = list(map(str, self.puzzle_ids))
-            self.start_idx = 1700
-            self.end_idx = 2000
         
-        # Get Puzzle Instance by Root Puzzle Split...
+        # Root Puzzle Split
+        if self.mode == 'train':
+            self.use_puzzle_list = "6,10,21,31,46,48,49,56,59,62,63,74,88,94,96,98,100"
+            self.num_tot = 230
+        elif self.mode == 'valid':
+            self.use_puzzle_list = "6,10,21,31,46,48,49,56,59,62,63,74,88,94,96,98,100"
+            self.num_tot = 20
+        elif self.mode == 'supervised_test':
+            self.use_puzzle_list = "6,10,21,31,46,48,49,56,59,62,63,74,88,94,96,98,100"
+            self.num_tot = 50
+        elif self.mode == 'zeroshot_test':
+            self.use_puzzle_list = "67,93,101"
+            self.num_tot = 300
+        
+        self.puzzle_ids = self.use_puzzle_list.split(',') 
+        
         self.qa_info = self.Get_Puzzle_Instance()
-        self.num_tot = self.end_idx-self.start_idx
-        print(f'{self.mode}, {self.experiment} Num of Root: {len(self.puzzle_ids)},  Num of Instance per root: {self.num_tot} = {len(self.puzzle_ids)*self.num_tot}')
+        print(f'{self.mode},  Num of Root: {len(self.puzzle_ids)},  Num of Instance per root: {self.num_tot} = {len(self.puzzle_ids)*self.num_tot}')
         
     def Get_Puzzle_Instance(self):
         qa_bundle = []
@@ -86,7 +70,18 @@ class V_COT_SMART101_Dataset(Dataset):
             csv_file = "puzzle_%s%s.csv" % (puzzle_id, gv.puzzle_diff[self.diff])
             qa_info = utils.read_csv(os.path.join(self.data_root, puzzle_root, csv_file), puzzle_id)
             
-            qa_info = qa_info[self.start_idx:self.end_idx]
+            # 인스턴스 퍼즐 스플릿.
+            if self.mode == 'train':
+                qa_info = qa_info[1700:1700+self.num_tot]
+            
+            elif self.mode == 'valid':
+                qa_info = qa_info[1930:1930+self.num_tot]
+                
+            elif self.mode == 'supervised_test':
+                qa_info = qa_info[1950:1950+self.num_tot]
+            
+            elif self.mode == 'zeroshot_test':
+                qa_info = qa_info[1700:1700+self.num_tot]
                 
             for t in range(len(qa_info)):
                 qa_info[t]["AnswerValue"] = utils.get_val(qa_info[t], qa_info[t]["Answer"])
@@ -133,7 +128,8 @@ class V_COT_SMART101_Dataset(Dataset):
         option_answer= f'Answer: {info["Answer"]}' # info['Answer']
         value_answer = opts[lbl]
         Answer_Option_phrase = Answer_Option_phrase.strip()
-                
+        
+        
         # Get Image Description & Pseudo Code
         img_dcp = self.image_description[im_name]
         pseudo_code = self.pseudo_code[f'puzzle_{pid}']
@@ -143,23 +139,16 @@ class V_COT_SMART101_Dataset(Dataset):
     def __len__(self):
         return len(self.qa_info)
 
-def img_dcp_train_collator_fn(data, args, processor, device):
+def img_dcp_train_collator_fn(data, processor, device):
+    
+    option_instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided, and answer with the letter corresponding to the options. Answer: ?"
+    value_setting_instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided."
     
     messages = []
     for im_name, im_path, pid, q_stn_out, options, option_answer, answer, value_answer, img_dcp, pseudo_code in data:
         
-        if args.answer_type == 'option':
-            instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided, and answer with the letter corresponding to the options. Answer: ?"
-            label = option_answer
-        elif args.answer_type == 'value':
-            instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided."
-            label = value_answer
-        
-        if args.use_option_prompt:
-            question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nOptions: {options}\nInstruction: {instruction_prompt}'
-        else:
-            question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nInstruction: {instruction_prompt}'
-        
+        # question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nOptions: {options}\nInstruction: {value_setting_instruction_prompt}' # option_instruction_prompt, value_setting_instruction_prompt
+        question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nInstruction: {value_setting_instruction_prompt}'
         prompt = [
             {
                 "role": "system",
@@ -171,8 +160,8 @@ def img_dcp_train_collator_fn(data, args, processor, device):
                 'content': [
                     {'type': 'text', 'text': question}]}, 
             
-            {   'role': 'assistant', 'content': [{'type': 'text', 'text': f'{label}'}]}]
-        
+            {   'role': 'assistant', 'content': [{'type': 'text', 'text': f'{value_answer}'}]}] # option_answer[-1], value_answer
+        # print(prompt)
         messages.append(prompt)
         
     texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False) for msg in messages]
@@ -200,23 +189,17 @@ def img_dcp_train_collator_fn(data, args, processor, device):
     labels_ids = torch.tensor(labels_list, dtype=torch.int64)
     return inputs, labels_ids
 
-def img_dcp_test_collator_fn(data, args, processor, device):
+def img_dcp_test_collator_fn(data, processor, device):
     
-    if args.answer_type == 'option':
-        instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided, and answer with the letter corresponding to the options. Answer: ?"
-    elif args.answer_type == 'value':
-        instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided."
+    option_instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided, and answer with the letter corresponding to the options. Answer: ?"
+    value_setting_instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided."
     
     gt = []
     im_name_list = []
     messages = []
     for im_name, im_path, pid, q_stn_out, options, option_answer, answer, value_answer, img_dcp, pseudo_code in data:
-
-        if args.use_option_prompt:
-            question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nOptions: {options}\nInstruction: {instruction_prompt}'
-        else:
-            question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nInstruction: {instruction_prompt}'
-            
+        # question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nOptions: {options}\nInstruction: {value_setting_instruction_prompt}' # option_instruction_prompt, value_setting_instruction_prompt
+        question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nInstruction: {value_setting_instruction_prompt}'
         prompt = [
             {
                 "role": "system",
@@ -228,9 +211,90 @@ def img_dcp_test_collator_fn(data, args, processor, device):
                 'content': [
                     {'type': 'text', 'text': question}]}
             ]
-        
         messages.append(prompt)
         gt.append(value_answer)
+        im_name_list.append(im_name)
+        
+    texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False) for msg in messages]
+    image_inputs, video_inputs = process_vision_info(messages)
+
+    inputs = processor(
+        text=texts,
+        images=image_inputs, # None
+        videos=video_inputs, # None
+        padding=True,
+        return_tensors="pt")
+
+    inputs = inputs.to(device)
+
+    return inputs, gt, im_name_list
+
+def img_dcp_clf_train_collator_fn(data, processor, device):
+    
+    instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided."
+    
+    messages = []
+    labels_list = []
+    for im_name, im_path, pid, q_stn_out, options, option_answer, answer, value_answer, img_dcp, pseudo_code in data:
+        question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nInstruction: {instruction_prompt}'
+        prompt = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "You are required to solve a algorithmic problem.\n"}]},    
+            
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': question}]}
+            
+            ]
+        
+        messages.append(prompt)
+        labels_list.append(answer)
+        
+    texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False) for msg in messages]
+    image_inputs, video_inputs = process_vision_info(messages)
+
+    inputs = processor(
+        text=texts,
+        images=image_inputs, # None
+        videos=video_inputs, # None
+        padding=True,
+        return_tensors="pt")
+
+    inputs = inputs.to(device)
+
+    input_ids_lists = inputs['input_ids'].tolist()
+    assert len(messages) == len(input_ids_lists)
+
+    labels_ids = torch.tensor(labels_list, dtype=torch.int64)
+    labels_ids = labels_ids.to(device)
+    
+    return inputs, labels_ids
+
+def img_dcp_clf_test_collator_fn(data, processor, device):
+    
+    instruction_prompt = "Please solve the problem using the question, image description, and pseudo code provided."
+    
+    gt = []
+    im_name_list = []
+    messages = []
+    for im_name, im_path, pid, q_stn_out, options, option_answer, answer, value_answer, img_dcp, pseudo_code in data:
+        question = f'Description of image: {img_dcp}\nPseudo_code: {pseudo_code}\nQuestion: {q_stn_out}\nInstruction: {instruction_prompt}'
+        prompt = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "You are required to solve a algorithmic problem.\n"}]},    
+            
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': question}]}
+            ]
+        messages.append(prompt)
+        gt.append(answer)
         im_name_list.append(im_name)
         
     texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False) for msg in messages]
