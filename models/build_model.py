@@ -21,7 +21,7 @@ def get_model(args):
                 pretrained_path,
                 torch_dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
-                device_map="balanced", # [balanced, auto]
+                device_map="auto", # [balanced, auto]
                 max_memory=max_memory) 
             
             print('\n*****Build Pretrained Qwen2_VL Model*****')
@@ -34,13 +34,13 @@ def get_model(args):
                 load_ckpt_path,
                 torch_dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
-                device_map="balanced", # [balanced, auto]
+                device_map="auto", # [balanced, auto]
                 max_memory=max_memory)
             
             print('\n*****Build Trained Qwen2_VL Model*****')
             print(f'Load ckpt path: {args.load_ckpt_path}..')
 
-        processor = AutoProcessor.from_pretrained(pretrained_path, min_pixels=256*28*28, max_pixels=512*28*28,)
+        processor = AutoProcessor.from_pretrained(pretrained_path, min_pixels=128*28*28, max_pixels=256*28*28)
         print(f'Load Processor: {pretrained_path}..')
         print(f'Available GPU num: {use_gpu}....')
     
@@ -58,7 +58,7 @@ def get_model(args):
                 pretrained_path,
                 torch_dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
-                device_map="balanced", # [balanced, auto]
+                device_map="auto", # [balanced, auto]
                 max_memory=max_memory) 
             
             print('\n*****Build Pretrained Qwen2_VL Model*****')
@@ -67,18 +67,33 @@ def get_model(args):
         # Generation or Evaluation Setting
         else:
             load_ckpt_path = os.path.join(args.save_root, args.load_ckpt_path)
+            # model = Qwen2VLForConditionalGeneration.from_pretrained(
+            #     load_ckpt_path,
+            #     torch_dtype=torch.bfloat16,
+            #     attn_implementation="flash_attention_2",
+            #     device_map="auto", # [balanced, auto]
+            #     max_memory=max_memory)
+            
             model = Qwen2VLForConditionalGeneration.from_pretrained(
-                load_ckpt_path,
+                pretrained_path,
                 torch_dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
-                device_map="balanced", # [balanced, auto]
+                device_map="auto", # [balanced, auto]
                 max_memory=max_memory)
+            model.load_state_dict(torch.load(load_ckpt_path, map_location='cuda'))
             
             print('\n*****Build Trained Qwen2_VL Model*****')
             print(f'Load ckpt path: {args.load_ckpt_path}..')
 
-        processor = AutoProcessor.from_pretrained(pretrained_path, min_pixels=128*28*28, max_pixels=256*28*28,)
+        processor = AutoProcessor.from_pretrained(pretrained_path, min_pixels=128*28*28, max_pixels=256*28*28)
         print(f'Load Processor: {pretrained_path}..')
         print(f'Available GPU num: {use_gpu}....')
+        
+    for name, param in model.named_parameters():
+        if 'visual' in name:
+            param.requires_grad=False
+    
+    print(f'\nRequire Grad Parameter numbers: {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
+    print(f'Freeze Parameter numbers: {sum(p.numel() for p in model.parameters() if not p.requires_grad)}')
     
     return model, processor

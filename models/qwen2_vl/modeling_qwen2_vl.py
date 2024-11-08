@@ -1451,7 +1451,7 @@ QWEN2_VL_INPUTS_DOCSTRING = r"""
             The rope index difference between sequence length and multimodal rope.
 """
 
-
+from models.qwen2_vl.MCA_module import *
 class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
@@ -1464,9 +1464,25 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel):
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.padding_side = "left"  # set it to left by default, user can use setter to change padding_sides
+        
+        self.img_token_id = 151655
+        self.endoftext_token_id = 151643
+        self.quad_start = 151650
+        self.quad_end = 151651
+        self.ref_start = 151646
+        self.ref_end = 151647
+        
+        # Pseudo Code CrossAttention
+        self.emb_shape = 1536
+        self.construct_MCA(dim=self.emb_shape, num_heads=4)
 
         # Initialize weights and apply final processing
         self.post_init()
+    
+    def construct_MCA(self, dim, num_heads, attn_drop=0.2, proj_drop=0.2):
+        self.MCA1 = MCA(dim, num_heads, attn_drop, proj_drop)
+        self.MCA2 = MCA(dim, num_heads, attn_drop, proj_drop)
+        self.MCA3 = MCA(dim, num_heads, attn_drop, proj_drop)
 
     def get_input_embeddings(self):
         return self.model.embed_tokens
@@ -1652,6 +1668,27 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel):
             model_kwargs["rope_deltas"] = outputs.rope_deltas
 
         return model_kwargs
+    
+    def pad_and_stack_tensors(self, tensor_list, padding_value=0):
+        """
+        길이가 다른 텐서 리스트를 0으로 패딩하여 하나의 텐서로 병합하는 함수.
+        
+        Parameters:
+        - tensor_list (list of torch.Tensor): 길이가 서로 다른 텐서 리스트.
+        - padding_value (int or float): 패딩에 사용할 값 (기본값: 0).
+        
+        Returns:
+        - torch.Tensor: 패딩 후 병합된 텐서 (N x max_length), N은 텐서 개수.
+        """
+        # 각 텐서의 길이 찾기
+        max_length = max(tensor.size(0) for tensor in tensor_list)
+        
+        # 각 텐서를 패딩하여 동일한 길이로 맞추고 스택
+        padded_tensors = [
+            F.pad(tensor.transpose(0,1), (0, max_length - tensor.transpose(0,1).shape[1]), value=padding_value)
+            for tensor in tensor_list
+        ]
+        return torch.stack(padded_tensors).transpose(1,2)
 
     @add_start_docstrings_to_model_forward(QWEN2_VL_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Qwen2VLCausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
@@ -1726,6 +1763,8 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel):
                 image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
                 image_mask = (input_ids == self.config.image_token_id).unsqueeze(-1).expand_as(inputs_embeds)
                 image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+                image_mask = image_mask.to(inputs_embeds.device)
+                image_embeds = image_embeds.to(inputs_embeds.device)
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
             if pixel_values_videos is not None:
@@ -1750,6 +1789,43 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel):
             return_dict=return_dict)
 
         hidden_states = outputs[0]
+        
+        # Cross Attention ****************************** #
+        B = input_ids.shape[0]
+        if hidden_states.shape[1] != 1:
+            key_img_dcp_emb, query_psuedo_emb = [], []
+            # start_idx, end_idx = 0,0
+            for i in range(B):
+                # end_idx += int(image_mask[i].sum()/self.emb_shape)
+                # key_img_emb.append(image_embeds[start_idx : end_idx])
+                # start_idx = end_idx   
+                
+                img_dcp_start_idx = (input_ids[i] == self.ref_start).nonzero()[0]
+                img_dcp_end_idx = (input_ids[i] == self.ref_end).nonzero()[0]
+                key_img_dcp_emb.append(hidden_states[i][img_dcp_start_idx+1:img_dcp_end_idx])                 
+                
+                pseudo_start_idx = (input_ids[i] == self.quad_start).nonzero()[0]
+                pseudo_end_idx = (input_ids[i] == self.quad_end).nonzero()[0]
+                query_psuedo_emb.append(hidden_states[i][pseudo_start_idx+1:pseudo_end_idx])
+                
+            key_img_dcp_emb = self.pad_and_stack_tensors(key_img_dcp_emb, 0)
+            query_psuedo_emb = self.pad_and_stack_tensors(query_psuedo_emb, 0)
+            
+            weighted_img_dcp_emb, attention_map1 = self.MCA1(key_img_dcp_emb, query_psuedo_emb, query_psuedo_emb)
+            weighted_img_dcp_emb, attention_map2 = self.MCA2(weighted_img_dcp_emb, query_psuedo_emb, query_psuedo_emb)
+            weighted_img_dcp_emb, attention_map3 = self.MCA3(weighted_img_dcp_emb, query_psuedo_emb, query_psuedo_emb)
+                            
+            weighted_img_dcp_emb = weighted_img_dcp_emb.to(image_mask.device)
+            
+            for i in range(B):
+                img_dcp_start_idx = (input_ids[i] == self.ref_start).nonzero()[0]
+                img_dcp_end_idx = (input_ids[i] == self.ref_end).nonzero()[0]
+                len_dcp_token = int(img_dcp_end_idx-img_dcp_start_idx-1)
+                hidden_states[i][img_dcp_start_idx+1:img_dcp_end_idx] = weighted_img_dcp_emb[i][:len_dcp_token]
+            
+            # print(hidden_states)
+            # ========================================== #
+        
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 

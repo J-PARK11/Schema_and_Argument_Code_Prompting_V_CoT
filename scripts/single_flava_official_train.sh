@@ -1,0 +1,3 @@
+CUDA_VISIBLE_DEVICES=1 python single_flava_official_train.py --num_workers 4 --num_epochs 100 --model_name flava --loss_type classifier --batch_size 32 --log_freq 10 --train_backbone --word_embed bert --lr 1e-5 --puzzles 1,2,3 --split_type standard --save_root /data/jhpark_checkpoint/schema_and_argument_ckpt/official_classification/supervised/flava_123
+
+CUDA_VISIBLE_DEVICES=1 python single_flava_official_train.py --num_workers 4 --num_epochs 100 --model_name flava --loss_type classifier --batch_size 32 --log_freq 10 --train_backbone --word_embed bert --lr 1e-5 --puzzles 1,2,3 --split_type standard --save_root /data/jhpark_checkpoint/schema_and_argument_ckpt/official_classification/supervised/flava_123 --test --seed 1706

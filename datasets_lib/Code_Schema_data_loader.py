@@ -60,7 +60,7 @@ class V_COT_SMART101_Dataset(Dataset):
                 self.puzzle_ids = gv.PS_VAL_IDX
                 self.puzzle_ids = list(map(str, self.puzzle_ids))
             self.start_idx = 1600
-            self.end_idx = 1700
+            self.end_idx = 1620 # 1700
             
         elif self.mode == 'test':
             if self.experiment == 'supervised':
@@ -142,6 +142,113 @@ class V_COT_SMART101_Dataset(Dataset):
 
     def __len__(self):
         return len(self.qa_info)
+
+def img_train_collator_fn(data, args, processor, device):
+    
+    messages = []
+    for im_name, im_path, pid, q_stn_out, options, option_answer, answer, value_answer, img_dcp, pseudo_code in data:
+        
+        if args.answer_type == 'option':
+            instruction_prompt = "Please solve the problem using the question, image, image description, and pseudo code provided, and answer with the letter corresponding to the options. Answer: ?"
+            label = option_answer
+        elif args.answer_type == 'value':
+            instruction_prompt = "Please solve the problem using the question, image, image description, and pseudo code provided."
+            label = value_answer
+        
+        if args.use_option_prompt:
+            question = f'Description of image: <|object_ref_start|>{img_dcp}<|object_ref_end|>\nPseudo_code: <|quad_start|>{pseudo_code}<|quad_end|>\nQuestion: {q_stn_out}\nOptions: {options}\nInstruction: {instruction_prompt}'
+        else:
+            question = f'Description of image: <|object_ref_start|>{img_dcp}<|object_ref_end|>\nPseudo_code: <|quad_start|>{pseudo_code}<|quad_end|>\nQuestion: {q_stn_out}\nInstruction: {instruction_prompt}'
+        
+        prompt = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "You are required to solve a algorithmic problem.\n"}]},    
+            
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'image', 'image': im_path},
+                    {'type': 'text', 'text': question}]}, 
+            
+            {   'role': 'assistant', 'content': [{'type': 'text', 'text': f'{label}'}]}]
+        
+        messages.append(prompt)
+        
+    texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False) for msg in messages]
+    image_inputs, video_inputs = process_vision_info(messages)
+
+    inputs = processor(
+        text=texts,
+        images=image_inputs, # None
+        videos=video_inputs, # None
+        padding=True,
+        return_tensors="pt")
+
+    inputs = inputs.to(device)
+
+    input_ids_lists = inputs['input_ids'].tolist()
+    assert len(messages) == len(input_ids_lists)
+
+    labels_list = []
+    for ids_list in input_ids_lists:
+        label_ids = [-100] * len(ids_list)
+        for begin_end_indexs in find_assistant_content_sublist_indexes(ids_list):
+            label_ids[begin_end_indexs[0]+2:begin_end_indexs[1]+1] = ids_list[begin_end_indexs[0]+2:begin_end_indexs[1]+1]
+        labels_list.append(label_ids)
+
+    labels_ids = torch.tensor(labels_list, dtype=torch.int64)
+    return inputs, labels_ids
+
+def img_test_collator_fn(data, args, processor, device):
+    
+    if args.answer_type == 'option':
+        instruction_prompt = "Please solve the problem using the question, image, image description, and pseudo code provided, and answer with the letter corresponding to the options. Answer: ?"
+    elif args.answer_type == 'value':
+        instruction_prompt = "Please solve the problem using the question, image, image description, and pseudo code provided."
+    
+    gt = []
+    im_name_list = []
+    messages = []
+    for im_name, im_path, pid, q_stn_out, options, option_answer, answer, value_answer, img_dcp, pseudo_code in data:
+
+        if args.use_option_prompt:
+            question = f'Description of image: <|object_ref_start|>{img_dcp}<|object_ref_end|>\nPseudo_code: <|quad_start|>{pseudo_code}<|quad_end|>\nQuestion: {q_stn_out}\nOptions: {options}\nInstruction: {instruction_prompt}'
+        else:
+            question = f'Description of image: <|object_ref_start|>{img_dcp}<|object_ref_end|>\nPseudo_code: <|quad_start|>{pseudo_code}<|quad_end|>\nQuestion: {q_stn_out}\nInstruction: {instruction_prompt}'
+        
+        prompt = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "You are required to solve a algorithmic problem.\n"}]},    
+            
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'image', 'image': im_path},
+                    {'type': 'text', 'text': question}]}
+            ]
+        
+        messages.append(prompt)
+        gt.append(value_answer)
+        im_name_list.append(im_name)
+        
+    texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False) for msg in messages]
+    image_inputs, video_inputs = process_vision_info(messages)
+
+    inputs = processor(
+        text=texts,
+        images=image_inputs, # None
+        videos=video_inputs, # None
+        padding=True,
+        return_tensors="pt")
+
+    inputs = inputs.to(device)
+
+    return inputs, gt, im_name_list
+    
 
 def img_dcp_train_collator_fn(data, args, processor, device):
     

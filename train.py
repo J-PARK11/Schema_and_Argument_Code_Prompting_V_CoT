@@ -48,13 +48,14 @@ if __name__ == "__main__":
     parser.add_argument("--loss_type", type=str, default="classifier")
     parser.add_argument("--load_ckpt_path", type=str, default="None")
     parser.add_argument("--use_gpu", type=str, default="0,1,2")
+    parser.add_argument("--use_scheduler", type=bool, default=False)
     parser.add_argument("--seed", type=int, default=1123)
     
     # Experiment arguments...
-    parser.add_argument("--experiment", type=str, default='supervised') # [supervised, zeroshot]
+    parser.add_argument("--experiment", type=str, default='supervised') # [supervised, zeroshot, code_gen_ft]
     parser.add_argument("--answer_type", type=str, default='value') # [option, value]
     parser.add_argument("--use_option_prompt", type=bool, default=False)
-    # parser.add_argument("--use_img", type=bool, default=False)
+    parser.add_argument("--use_img", type=bool, default=False)
     # parser.add_argument("--use_img_dcp", type=bool, default=False)
     # parser.add_argument("--use_pseudo_code", type=bool, default=False)    
     

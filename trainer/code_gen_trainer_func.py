@@ -1,5 +1,4 @@
 import os
-import copy
 import json
 import torch
 from tqdm import tqdm
@@ -19,12 +18,9 @@ def trainer_train(args, model, processor, train_loader, valid_loader):
     train_loss_logger, valid_loss_logger, lr_logger = dict(), dict(), dict()
     len_train, len_valid = len(train_loader), len(valid_loader)
     grad_accumulation_steps = 2
-    valid_frequency_steps = 1000
+    valid_frequency_steps = 500
     
-    optimizer = AdamW([{'params': model.model.parameters(), 'lr': args.lr},
-                       {'params': model.MCA1.parameters(), 'lr': args.lr*100},
-                       {'params': model.MCA2.parameters(), 'lr': args.lr*100},
-                       {'params': model.MCA3.parameters(), 'lr': args.lr*100}])
+    optimizer = AdamW(model.parameters(), lr=args.lr)
     
     # Scheduler and Warmup 
     if args.use_scheduler:
@@ -35,15 +31,11 @@ def trainer_train(args, model, processor, train_loader, valid_loader):
     
     # Train & Valid Integrated Loop...
     for epoch in tqdm(range(epochs)):
-        
         steps = 0
         accumulated_avg_loss = 0
         
         # Train Loop bundle...
         for batch in train_loader:
-            
-            # if steps==5:break
-            
             steps += 1
             inputs, labels = batch
             
@@ -89,10 +81,6 @@ def trainer_train(args, model, processor, train_loader, valid_loader):
                 with open(valid_loss_save_path,'w') as f:
                     json.dump(valid_loss_logger, f, ensure_ascii=False, indent=4) 
                 
-                # 학습 결과 Plot 시각화 파일 저장
-                loss_curve_path = os.path.join(args.save_root, args.save_folder, 'loss_curve.png')
-                plot_loss(train_loss_logger, valid_loss_logger, epoch+1, len_train, loss_curve_path)
-                
             # LR Scheduler Update...
             if args.use_scheduler:
                 if steps % lr_update_frequency_steps == 0:
@@ -109,14 +97,6 @@ def trainer_train(args, model, processor, train_loader, valid_loader):
         os.makedirs(epoch_output_dir, exist_ok=True)
 
         # 에폭별로 모델과 프로세서를 저장
-        model.eval()
-        save_model_path = os.path.join(epoch_output_dir, 'whole_model.pth')
-        save_model = copy.deepcopy(model)
-        torch.save(save_model.state_dict(), save_model_path)
-        print(f'Save model: epoch {epoch+1} to {save_model_path}')
-        del save_model
-        model.train()
-        
         model.save_pretrained(epoch_output_dir)
         processor.save_pretrained(epoch_output_dir)
         
@@ -164,9 +144,9 @@ def trainer_generate(args, model, processor, test_loader):
     model.eval()
     TP, ALL = 0, 0
     result_dict = dict()
-    for batch in test_loader:
+    for idx, batch in enumerate(test_loader):
         
-        inputs, gt, im_name_list = batch
+        inputs, puzzle_name = batch
         
         generated_ids = model.generate(**inputs, max_new_tokens=512)
         generated_ids_trimmed = [
@@ -175,100 +155,8 @@ def trainer_generate(args, model, processor, test_loader):
         output_texts = processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
         
-        if args.answer_type == 'option':
-            TP, ALL, result_dict = calc_option_acc(output_texts, gt, im_name_list, TP, ALL, result_dict)
-        elif args.answer_type == 'value':
-            TP, ALL, result_dict = calc_value_acc(output_texts, gt, im_name_list, TP, ALL, result_dict)
-
+        result_dict[puzzle_name] = {'pred': output_texts}
+        
     result_save_path = os.path.join(args.save_root, f'{args.load_ckpt_path}_{args.experiment}_Option_{args.use_option_prompt}_result_dict.json')
     with open(result_save_path,'w') as f:
         json.dump(result_dict, f, ensure_ascii=False, indent=4) 
-
-def code_generate(args, model, processor, test_loader):
-    
-    model.eval()
-    result_dict = dict()
-    for idx, batch in tqdm(enumerate(test_loader)):
-
-        inputs, puzzle_name, question_list = batch
-        
-        generated_ids = model.generate(**inputs, max_new_tokens=512)
-        generated_ids_trimmed = [
-            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        output_texts = processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-        
-        for name, pred, q in zip(puzzle_name, output_texts, question_list):
-            result_dict[name] = {'question': q,
-                                 'pred': pred}
-        
-        print(f'batch {idx}/{len(test_loader)}: Pid: {name}, Question: {q}, Pred: {pred}')
-        
-    result_save_path = os.path.join(args.save_root, f'{args.load_ckpt_path}_{args.experiment}_result_dict.json')
-    with open(result_save_path,'w') as f:
-        json.dump(result_dict, f, ensure_ascii=False, indent=4) 
-
-def calc_option_acc(pred_list, label_list, im_name_list, TP, ALL, result_dict):
-    
-    for pred, label, img_name in zip(pred_list, label_list, im_name_list):
-        eval_answer = pred.upper()
-        
-        find_std_format1 = eval_answer[-100:].find(f'ANSWER: {label[-1]}')
-        find_std_format2 = eval_answer[-100:].find(f'ANSWER:{label[-1]}')
-        find_std_format3 = eval_answer[-100:].find(f'ANSWER.{label[-1]}')
-        find_std_format4 = eval_answer[-100:].find(f'ANSWER. {label[-1]}')
-        find_std_format5 = eval_answer[-100:].find(f'ANSWER IS {label[-1]}')      
-          
-        find_only_answer1 = (len(eval_answer)==1 and eval_answer[0] == label[-1])    
-        find_only_answer2 = (eval_answer[:2] == f'{label[-1]}.')     
-        find_only_answer3 = (eval_answer[-2:] == f' {label[-1]}') 
-        find_only_answer4 = (eval_answer[-2:] == f':{label[-1]}')
-        find_only_answer5 = (eval_answer[-2:] == f'.{label[-1]}')
-        find_only_answer6 = (eval_answer[-2:] == f'\n{label[-1]}')
-        find_only_answer7 = (eval_answer[-3:] == f' {label[-1]}.')
-    
-        if ((find_only_answer1) or (find_only_answer2) or (find_only_answer3) or (find_only_answer4) or (find_only_answer5) or (find_only_answer6) or (find_only_answer7) or\
-            (find_std_format1>=0) or (find_std_format2>=0) or (find_std_format3>=0) or (find_std_format4>=0) or (find_std_format5>=0)):
-            TP += 1   
-            hit = True
-        else:
-            hit = False    
-        ALL += 1
-        
-        result_dict[img_name] = {
-            'Pred': pred,
-            'Label': label,
-            'hit': hit}
-    
-    save_pred = pred.replace('\n',' ')
-    try: print(f"Accuracy = {TP}/{ALL} = {TP/ALL:.4f},  Pred: {save_pred},  Label: {label}")
-    except: pass
-    return TP, ALL, result_dict
-
-def calc_value_acc(pred_list, label_list, im_name_list, TP, ALL, result_dict):
-    
-    for pred, label, img_name in zip(pred_list, label_list, im_name_list):
-        eval_answer = pred.upper()
-        eval_label = label.upper()
-        
-        find_answer1 = eval_answer.find(f' {eval_label}')
-        find_answer2 = eval_answer.find(f'\n{eval_label}')
-        find_answer3 = eval_answer.find(f':{eval_label}')
-    
-        if (find_answer1 >= 0) or (find_answer2 >= 0) or (find_answer3 >= 0):
-            TP += 1   
-            hit = True
-        else:
-            hit = False    
-        ALL += 1
-        
-        result_dict[img_name] = {
-            'Pred': pred,
-            'Label': label,
-            'hit': hit}
-    
-    save_pred = pred.replace('\n',' ')
-    try: print(f"Accuracy = {TP}/{ALL} = {TP/ALL:.4f},  Pred: {save_pred},  Label: {label},  img_name: {img_name}")
-    except: pass
-    return TP, ALL, result_dict

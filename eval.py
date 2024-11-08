@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 import lib.SMART_globvars as gv
 from models.build_model import get_model
 from datasets_lib.build_dataset import get_dataset
-from trainer.trainer_func import trainer_generate
+from trainer.trainer_func import trainer_generate, code_generate
 
 def eval():
     
@@ -27,7 +27,10 @@ def eval():
     test_loader = get_dataset(args, processor)
     
     # exe generate...
-    trainer_generate(args, model, processor, test_loader)
+    if args.experiment != "code_gen_ft":
+        trainer_generate(args, model, processor, test_loader)
+    else:
+        code_generate(args, model, processor, test_loader)
         
     print('\n*****Schema and Argument Evaluate.py Complete*****')
 
@@ -48,13 +51,14 @@ if __name__ == "__main__":
     parser.add_argument("--loss_type", type=str, default="classifier")
     parser.add_argument("--load_ckpt_path", type=str, default="demo/epoch_2/")
     parser.add_argument("--use_gpu", type=str, default="0,1,2,3")
+    parser.add_argument("--use_scheduler", type=bool, default=False)
     parser.add_argument("--seed", type=int, default=1123)
     
     # Experiment arguments...
     parser.add_argument("--experiment", type=str, default='supervised') # [supervised, zeroshot]
+    parser.add_argument("--answer_type", type=str, default='value') # [option, value]
+    parser.add_argument("--use_option_prompt", type=bool, default=False)
     parser.add_argument("--use_img", type=bool, default=False)
-    parser.add_argument("--use_img_dcp", type=bool, default=False)
-    parser.add_argument("--use_pseudo_code", type=bool, default=False)
     
     # Path argumnets...
     parser.add_argument("--save_root", type=str, default='/data/jhpark_checkpoint/schema_and_argument_ckpt')
